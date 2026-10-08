@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Meta POV - VR Recorder</title>
+    <!-- Tailwind CSS para estilização rápida e responsiva -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome para ícones -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #000;
+            color: white;
+            overflow: hidden; /* Evita rolar a tela acidentalmente no VR */
+            font-family: 'Inter', sans-serif;
+            touch-action: none; /* Previne gestos padrão do navegador (pull-to-refresh) */
+        }
+
+        /* Container principal que divide a tela */
+        #vr-container {
+            display: flex;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        /* Metades do VR (Olho Esquerdo e Direito) */
+        .eye-view {
+            width: 50%;
+            height: 100%;
+            overflow: hidden;
+            position: relative;
+            background-color: #111;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* O elemento de vídeo em si */
+        .camera-feed {
+            /* Tamanho maior que o container para permitir ajuste de posição e zoom */
+            width: 120%; 
+            height: 120%;
+            object-fit: cover;
+            /* Inicia com transformações zeradas, serão ajustadas via JS */
+            transform: scale(1) translateX(0px) translateY(0px);
+            transition: transform 0.1s ease-out;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 50;
+            pointer-events: none; /* Deixa os cliques passarem para os botões específicos */
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        /* Torna apenas os elementos da UI clicáveis */
+        .interactive-ui {
+            pointer-events: auto;
+        }
+
+        /* Animação para esconder/mostrar UI */
+        .fade-transition {
+            transition: opacity 0.3s ease-in-out;
+        }
+
+        /* Estilização dos Sliders (Range Inputs) */
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100%;
+            background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 24px;
+            width: 24px;
+            border-radius: 50%;
+            background: #3b82f6;
+            cursor: pointer;
+            margin-top: -10px;
+            box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 2px;
+        }
+
+        /* Botão de gravação pulsante */
+        @keyframes pulse-red {
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+            70% { box-shadow: 0 0 0 15px rgba(239, 68, 68, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+        .recording-active {
+            animation: pulse-red 1.5s infinite;
+            background-color: transparent !important;
+            border: 4px solid #ef4444;
+            border-radius: 8px !important; /* Muda de círculo para quadrado arredondado */
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Tela inicial de permissão -->
+    <div id="start-screen" class="absolute inset-0 z-50 flex flex-col items-center justify-center bg-zinc-950 text-center p-6">
+        <div class="w-20 h-20 mb-6 bg-blue-600 rounded-2xl flex items-center justify-center shadow-[0_0_30px_rgba(37,99,235,0.5)]">
+            <i class="fa-solid fa-vr-cardboard text-4xl"></i>
+        </div>
+        <h1 class="text-3xl font-bold mb-2">Meta POV Recorder</h1>
+        <p class="text-gray-400 mb-8 max-w-md">Para iniciar, precisamos acessar a câmera traseira e o microfone do seu celular. O vídeo final será salvo inteiro, sem divisão.</p>
+        <button id="btn-start-camera" class="interactive-ui bg-white text-black font-bold py-4 px-8 rounded-full text-lg shadow-lg hover:bg-gray-200 transition">
+            <i class="fa-solid fa-camera mr-2"></i> Iniciar Câmera
+        </button>
+        <div id="error-message" class="text-red-500 mt-4 hidden bg-red-900/30 p-3 rounded-lg"></div>
+    </div>
+
+    <!-- Container da Visão VR -->
+    <div id="vr-container">
+        <!-- Olho Esquerdo -->
+        <div class="eye-view">
+            <!-- playsinline e muted são obrigatórios no iOS para não bugar o áudio/autoplay -->
+            <video id="video-left" class="camera-feed" autoplay playsinline muted></video>
+            <div class="absolute inset-0 flex items-center justify-center opacity-10 pointer-events-none">
+                <div class="w-px h-full bg-blue-500"></div>
+                <div class="w-full h-px bg-blue-500 absolute"></div>
+            </div>
+        </div>
+        
+        <!-- Linha divisória física central -->
+        <div class="w-1 h-full bg-black z-40 relative shadow-[0_0_15px_rgba(0,0,0,1)]"></div>
+
+        <!-- Olho Direito -->
+        <div class="eye-view">
+            <video id="video-right" class="camera-feed" autoplay playsinline muted></video>
+            <div class="absolute inset-0 flex items-center justify-center opacity-10 pointer-events-none">
+                <div class="w-px h-full bg-blue-500"></div>
+                <div class="w-full h-px bg-blue-500 absolute"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Interface Sobreposta (HUD) -->
+    <div id="ui-layer" class="hidden fade-transition p-4">
+        
+        <!-- Top Bar: Status e Tela Cheia -->
+        <div class="flex justify-between items-start">
+            <div id="record-status" class="bg-black/60 backdrop-blur-md rounded-full px-4 py-2 flex items-center gap-2 opacity-0 fade-transition interactive-ui">
+                <div class="w-3 h-3 bg-red-500 rounded-full pulse-red"></div>
+                <span id="timer" class="font-mono font-bold text-sm">00:00</span>
+            </div>
+            
+            <button id="btn-fullscreen" class="interactive-ui bg-black/50 backdrop-blur-md w-12 h-12 rounded-full flex items-center justify-center text-xl hover:bg-white/20 transition">
+                <i class="fa-solid fa-expand"></i>
+            </button>
+        </div>
+
+        <!-- Bottom Bar: Configurações e Gravar -->
+        <div class="flex flex-col gap-4">
+            
+            <!-- Painel de Ajustes de Foco/IPD -->
+            <div id="settings-panel" class="bg-black/70 backdrop-blur-md p-5 rounded-2xl mx-auto w-11/12 max-w-md interactive-ui fade-transition">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="font-bold text-sm uppercase tracking-wider text-gray-300"><i class="fa-solid fa-sliders mr-2"></i> Ajustes de Foco VR</h3>
+                    <button id="btn-close-settings" class="text-gray-400 hover:text-white p-2">
+                        <i class="fa-solid fa-times"></i>
+                    </button>
+                </div>
+                
+                <!-- Zoom Digital -->
+                <div class="mb-4">
+                    <div class="flex justify-between text-xs text-gray-400 mb-1">
+                        <span>Zoom</span>
+                        <span id="val-zoom">1.0x</span>
+                    </div>
+                    <input type="range" id="slider-zoom" min="1" max="2.5" step="0.05" value="1">
+                </div>
+
+                <!-- Distância (IPD - Horizontal) -->
+                <div class="mb-2">
+                    <div class="flex justify-between text-xs text-gray-400 mb-1">
+                        <span>Distância dos Olhos (Horizontal)</span>
+                        <span id="val-x">0</span>
+                    </div>
+                    <input type="range" id="slider-x" min="-100" max="100" step="1" value="0">
+                </div>
+            </div>
+
+            <!-- Botões Principais (Gravar e Toggle Settings) -->
+            <div class="flex justify-center items-center gap-8 mb-4">
+                <button id="btn-toggle-settings" class="interactive-ui bg-zinc-800/80 backdrop-blur-md w-12 h-12 rounded-full flex items-center justify-center text-lg shadow-lg hover:bg-zinc-700 transition">
+                    <i class="fa-solid fa-gear"></i>
+                </button>
+
+                <!-- Botão de Gravação -->
+                <div class="relative flex items-center justify-center w-24 h-24">
+                    <!-- Borda externa branca -->
+                    <div class="absolute inset-0 rounded-full border-4 border-white/50"></div>
+                    <!-- Miolo vermelho -->
+                    <button id="btn-record" class="interactive-ui bg-red-600 w-16 h-16 rounded-full transition-all duration-300 flex items-center justify-center text-white z-10 shadow-[0_0_20px_rgba(220,38,38,0.5)]"></button>
+                </div>
+                
+                <!-- Botão para Esconder Tudo -->
+                <button id="btn-hide-ui" class="interactive-ui bg-zinc-800/80 backdrop-blur-md w-12 h-12 rounded-full flex items-center justify-center text-lg shadow-lg hover:bg-zinc-700 transition" title="Esconder Interface">
+                    <i class="fa-solid fa-eye-slash"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Botão escondido para revelar UI quando ela for ocultada -->
+    <button id="btn-show-ui" class="hidden interactive-ui absolute bottom-4 left-1/2 -translate-x-1/2 bg-blue-600/80 backdrop-blur-md px-6 py-2 rounded-full font-bold shadow-lg z-50">
+        <i class="fa-solid fa-eye mr-2"></i> Mostrar Controles
+    </button>
+
+    <!-- Modal de Sucesso/Download -->
+    <div id="modal-download" class="hidden absolute inset-0 z-[100] bg-black/90 flex flex-col items-center justify-center p-6 text-center interactive-ui">
+        <div class="w-16 h-16 bg-green-500 rounded-full flex items-center justify-center text-3xl mb-4 shadow-[0_0_30px_rgba(34,197,94,0.6)]">
+            <i class="fa-solid fa-check"></i>
+        </div>
+        <h2 class="text-2xl font-bold mb-2">Vídeo Gravado!</h2>
+        <p class="text-gray-400 mb-8 max-w-sm">O seu vídeo em tela cheia (com áudio) está pronto. O download deve começar automaticamente, ou clique no botão abaixo.</p>
+        
+        <div class="flex gap-4">
+            <a id="download-link" href="#" class="bg-blue-600 font-bold py-3 px-6 rounded-full text-lg shadow-lg hover:bg-blue-500 transition">
+                <i class="fa-solid fa-download mr-2"></i> Baixar Vídeo
+            </a>
+            <button id="btn-close-modal" class="bg-zinc-800 font-bold py-3 px-6 rounded-full text-lg shadow-lg hover:bg-zinc-700 transition">
+                Voltar
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // Variáveis de Estado
+        let mediaStream = null;
+        let mediaRecorder = null;
+        let recordedChunks = [];
+        let isRecording = false;
+        let recordStartTime = 0;
+        let timerInterval = null;
+
+        // Elementos do DOM
+        const videoLeft = document.getElementById('video-left');
+        const videoRight = document.getElementById('video-right');
+        const startScreen = document.getElementById('start-screen');
+        const uiLayer = document.getElementById('ui-layer');
+        const btnStartCamera = document.getElementById('btn-start-camera');
+        const errorMessage = document.getElementById('error-message');
+        const btnRecord = document.getElementById('btn-record');
+        const recordStatus = document.getElementById('record-status');
+        const timerDisplay = document.getElementById('timer');
+        const modalDownload = document.getElementById('modal-download');
+        const downloadLink = document.getElementById('download-link');
+
+        // Controles de Ajuste
+        const sliderZoom = document.getElementById('slider-zoom');
+        const sliderX = document.getElementById('slider-x');
+        const valZoom = document.getElementById('val-zoom');
+        const valX = document.getElementById('val-x');
+
+        async function initCamera() {
+            try {
+                // Solicita câmera traseira (environment) em alta resolução e Microfone (audio: true)
+                const constraints = {
+                    video: { 
+                        facingMode: { ideal: "environment" },
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 }
+                    },
+                    audio: true
+                };
+
+                mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+                
+                // Joga o stream para as duas telas
+                videoLeft.srcObject = mediaStream;
+                videoRight.srcObject = mediaStream;
+
+                // Esconde a tela inicial e mostra o app
+                startScreen.classList.add('hidden');
+                uiLayer.classList.remove('hidden');
+                
+                // Força os vídeos a tocarem (necessário em alguns navegadores mobile)
+                videoLeft.play().catch(e => console.log("Auto-play prevented", e));
+                videoRight.play().catch(e => console.log("Auto-play prevented", e));
+
+                setupMediaRecorder();
+
+            } catch (err) {
+                console.error("Erro ao acessar câmera:", err);
+                errorMessage.innerHTML = `<i class="fa-solid fa-triangle-exclamation mr-2"></i> Erro: Não foi possível acessar a câmera ou microfone. Dê as permissões no navegador. (${err.message})`;
+                errorMessage.classList.remove('hidden');
+            }
+        }
+
+        function setupMediaRecorder() {
+            // Tenta usar um formato compatível, preferindo mp4 para iOS/Geral, fallback webm
+            let options = { mimeType: 'video/webm;codecs=vp8,opus' };
+            if (!MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')) {
+                options = { mimeType: 'video/webm' };
+                if (!MediaRecorder.isTypeSupported('video/webm')) {
+                    options = { mimeType: 'video/mp4' }; // Fallback Safari iOS
+                    if (!MediaRecorder.isTypeSupported('video/mp4')) {
+                        options = {}; // Deixa o navegador decidir o padrão
+                    }
+                }
+            }
+
+            mediaRecorder = new MediaRecorder(mediaStream, options);
+
+            mediaRecorder.ondataavailable = function(e) {
+                if (e.data && e.data.size > 0) {
+                    recordedChunks.push(e.data);
+                }
+            };
+
+            mediaRecorder.onstop = function() {
+                // Ao parar de gravar, cria o arquivo e mostra o modal
+                const blob = new Blob(recordedChunks, { type: options.mimeType || 'video/mp4' });
+                const url = URL.createObjectURL(blob);
+                
+                // Define o link de download
+                downloadLink.href = url;
+                // Gera nome com data
+                const dateStr = new Date().toISOString().slice(0,10).replace(/-/g,"");
+                downloadLink.download = `MetaPOV_VR_${dateStr}.mp4`; 
+                
+                // Mostra a tela de sucesso
+                modalDownload.classList.remove('hidden');
+                
+                // Reseta os chunks para a próxima gravação
+                recordedChunks = [];
+            };
+        }
+
+        function toggleRecording() {
+            if (!mediaRecorder) return;
+
+            if (isRecording) {
+                // PARAR GRAVAÇÃO
+                mediaRecorder.stop();
+                isRecording = false;
+                
+                // Atualiza UI
+                btnRecord.classList.remove('recording-active');
+                recordStatus.classList.add('opacity-0');
+                clearInterval(timerInterval);
+                
+            } else {
+                // INICIAR GRAVAÇÃO
+                recordedChunks = []; // Limpa gravações anteriores
+                mediaRecorder.start();
+                isRecording = true;
+                
+                // Atualiza UI
+                btnRecord.classList.add('recording-active');
+                recordStatus.classList.remove('opacity-0');
+                
+                // Inicia cronômetro
+                recordStartTime = Date.now();
+                updateTimer();
+                timerInterval = setInterval(updateTimer, 1000);
+            }
+        }
+
+        function updateTimer() {
+            const elapsed = Math.floor((Date.now() - recordStartTime) / 1000);
+            const minutes = Math.floor(elapsed / 60).toString().padStart(2, '0');
+            const seconds = (elapsed % 60).toString().padStart(2, '0');
+            timerDisplay.textContent = `${minutes}:${seconds}`;
+        }
+
+        function updateTransforms() {
+            const zoom = sliderZoom.value;
+            const x = sliderX.value; // Distância entre as imagens
+
+            valZoom.textContent = `${zoom}x`;
+            valX.textContent = x;
+
+            // Aplica as transformações. 
+            // O olho esquerdo move para um lado, o direito para o outro para ajustar o IPD
+            videoLeft.style.transform = `scale(${zoom}) translateX(${x}px)`;
+            videoRight.style.transform = `scale(${zoom}) translateX(${-x}px)`;
+        }
+
+        // Listeners dos controles
+        sliderZoom.addEventListener('input', updateTransforms);
+        sliderX.addEventListener('input', updateTransforms);
+        btnStartCamera.addEventListener('click', initCamera);
+        btnRecord.addEventListener('click', toggleRecording);
+        
+        document.getElementById('btn-close-modal').addEventListener('click', () => {
+            modalDownload.classList.add('hidden');
+        });
+
+        // Configurações e Esconder UI
+        const settingsPanel = document.getElementById('settings-panel');
+        document.getElementById('btn-toggle-settings').addEventListener('click', () => {
+            settingsPanel.classList.toggle('hidden');
+            settingsPanel.classList.toggle('opacity-0');
+        });
+        document.getElementById('btn-close-settings').addEventListener('click', () => {
+            settingsPanel.classList.add('hidden', 'opacity-0');
+        });
+
+        const btnShowUI = document.getElementById('btn-show-ui');
+        document.getElementById('btn-hide-ui').addEventListener('click', () => {
+            uiLayer.classList.add('opacity-0');
+            setTimeout(() => uiLayer.classList.add('hidden'), 300); // Esconde após animação
+            btnShowUI.classList.remove('hidden');
+        });
+
+        btnShowUI.addEventListener('click', () => {
+            uiLayer.classList.remove('hidden');
+            setTimeout(() => uiLayer.classList.remove('opacity-0'), 10);
+            btnShowUI.classList.add('hidden');
+        });
+
+        // Tela Cheia API
+        document.getElementById('btn-fullscreen').addEventListener('click', () => {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(err => {
+                    console.log(`Error attempting to enable fullscreen: ${err.message}`);
+                });
+            } else {
+                document.exitFullscreen();
+            }
+        });
+
+    </script>
+</body>
+</html>
